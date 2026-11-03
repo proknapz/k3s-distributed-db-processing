@@ -38,22 +38,91 @@ make it public (Package settings) or pass `-RegistryUser`/`-RegistryToken` (a PA
 
 Install Tailscale on the master and both workers (`tailscale up`), then note each node's address (`tailscale ip -4`).
 
-```bash
-# master
-curl -sfL https://get.k3s.io | sh -s - server \
-  --node-ip <master-ts-ip> --advertise-address <master-ts-ip> --tls-san <master-ts-ip> \
-  --flannel-iface tailscale0
-sudo cat /var/lib/rancher/k3s/server/node-token
+### Master Node Setup (Windows PC with WSL)
 
-# each worker
-curl -sfL https://get.k3s.io | K3S_URL=https://<master-ts-ip>:6443 K3S_TOKEN=<token> sh -s - agent \
-  --node-ip <this-worker-ts-ip> --flannel-iface tailscale0
+**On your Windows PC with internet access:**
+
+1. Download the K3s binary:
+```powershell
+mkdir C:\k3s-install
+cd C:\k3s-install
+
+# Get latest release (or specify version like v1.37.1)
+$latestRelease = ((Invoke-WebRequest -Uri "https://api.github.com/repos/k3s-io/k3s/releases/latest" -UseBasicParsing).Content | ConvertFrom-Json)
+$downloadUrl = $latestRelease.assets | Where-Object {$_.name -eq "k3s"} | Select-Object -ExpandProperty browser_download_url
+Invoke-WebRequest -Uri $downloadUrl -OutFile "k3s"
+
+# Verify file size is ~80-150MB
+ls -la k3s
 ```
 
-On your PC (also on the tailnet): copy `/etc/rancher/k3s/k3s.yaml` from the master, replace
-`127.0.0.1` with `<master-ts-ip>`, and use it as your kubeconfig. Check with `kubectl get nodes`.
-Cross-node pod traffic over `tailscale0` is the part most likely to need debugging; if pods on
-different nodes cannot talk, check that the tailnet ACLs allow the nodes to reach each other.
+**In WSL on that same PC:**
+
+2. Copy K3s binary and start the control-plane:
+```bash
+# Copy from Windows to WSL
+cp /mnt/c/k3s-install/k3s /tmp/k3s
+chmod +x /tmp/k3s
+
+# Get your Tailscale IP
+MASTER_IP=$(tailscale ip -4)
+echo "Master IP: $MASTER_IP"
+
+# Start K3s server with Tailscale networking
+sudo /tmp/k3s server \
+  --node-ip $MASTER_IP \
+  --advertise-address $MASTER_IP \
+  --tls-san $MASTER_IP \
+  --tls-san 127.0.0.1 \
+  --tls-san localhost \
+  --flannel-iface tailscale0 \
+  --node-taint node-role.kubernetes.io/control-plane=true:NoSchedule \
+  --write-kubeconfig-mode 644
+```
+
+3. Verify the master is running (in a new WSL terminal):
+```bash
+sudo /tmp/k3s kubectl get nodes
+```
+
+4. Get the node token for workers:
+```bash
+sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+### Worker Node Setup (any machine on Tailscale)
+
+On each worker machine (after installing Tailscale and getting its IP):
+
+```bash
+MASTER_IP=<master-tailscale-ip>
+NODE_IP=$(tailscale ip -4)
+TOKEN=<token-from-master>
+
+curl -sfL https://get.k3s.io | K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=$TOKEN sh -s - agent \
+  --node-ip $NODE_IP \
+  --flannel-iface tailscale0
+```
+
+### Access from your PC
+
+On your PC (also on the tailnet):
+
+```bash
+# Copy kubeconfig from master via Tailscale
+scp user@<master-ts-ip>:/etc/rancher/k3s/k3s.yaml ~/.kube/config
+
+# Update the server address (if needed)
+sed -i 's/127.0.0.1/<master-ts-ip>/g' ~/.kube/config
+
+# Verify connectivity
+kubectl get nodes
+```
+
+**Troubleshooting:**
+- If pods on different nodes cannot communicate, check Tailscale ACLs allow traffic between nodes
+- If `kubectl` gets certificate errors, ensure `--tls-san` includes the IP you're connecting with
+- If K3s fails to start due to port in use: `sudo pkill -9 -f k3s; sudo rm -rf /var/lib/rancher/k3s`
 
 ## 2. Deploy
 
