@@ -26,21 +26,15 @@ Task types: Calculate Statistics, Find Duplicates, Detect Anomalies, Sort Data, 
 (Compare Datasets is not implemented yet; add a runner/reducer pair in `processing.py`.)
 Anomaly detection uses z-scores computed per chunk, which is an approximation on random data.
 
-## 1. Publish to GitHub
 
-```powershell
-git init -b main
-git add .
-git commit -m "Distributed database processing platform"
-git remote add origin https://github.com/<you>/<repo>.git
-git push -u origin main
-```
 
 The workflow publishes `ghcr.io/<you>/<repo>/dbp-platform:latest`. The DB password is **not** in the repo;
 `deploy.ps1` generates it and stores it only in the cluster. If the GHCR package is private, either
 make it public (Package settings) or pass `-RegistryUser`/`-RegistryToken` (a PAT with `read:packages`) to the deploy script.
 
-## 2. K3s over Tailscale (optional, lets the nodes live on different networks)
+> **Per-machine command list (master, worker 1, worker 2): see [docs/NODE-SETUP.md](docs/NODE-SETUP.md).**
+
+## 1. K3s over Tailscale (optional, lets the nodes live on different networks)
 
 Install Tailscale on the master and both workers (`tailscale up`), then note each node's address (`tailscale ip -4`).
 
@@ -61,7 +55,7 @@ On your PC (also on the tailnet): copy `/etc/rancher/k3s/k3s.yaml` from the mast
 Cross-node pod traffic over `tailscale0` is the part most likely to need debugging; if pods on
 different nodes cannot talk, check that the tailnet ACLs allow the nodes to reach each other.
 
-## 3. Deploy
+## 2. Deploy
 
 Find the node names with `kubectl get nodes` (Worker Node 1 hosts PostgreSQL).
 
