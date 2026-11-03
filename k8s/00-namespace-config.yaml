@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dbp
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: dbp
+data:
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGDATABASE: dbp
+# The Secret "postgres-credentials" (POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD) is
+# created by scripts/deploy.ps1 so no password is stored in git.

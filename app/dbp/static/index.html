@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Distributed Database Processing Platform</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 960px; color: #222; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 0; }
+  section { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  label { margin-right: 1rem; } input, select, button { padding: .35rem .5rem; font-size: .95rem; }
+  button { cursor: pointer; } table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #eee; }
+  tr.job { cursor: pointer; } tr.job:hover { background: #f5f8ff; }
+  .bar { background: #eee; border-radius: 4px; height: 10px; width: 120px; display: inline-block; }
+  .bar > span { background: #3b82f6; display: block; height: 100%; border-radius: 4px; }
+  .done { color: #15803d; } .failed { color: #b91c1c; } .running { color: #b45309; }
+  pre { background: #f6f8fa; padding: .75rem; overflow: auto; max-height: 340px; }
+  #msg { color: #b91c1c; }
+</style>
+</head>
+<body>
+<h1>Distributed Database Processing Platform</h1>
+
+<section>
+  <h2>1. Dataset</h2>
+  <span id="dataset">loading...</span><br><br>
+  <label>Rows <input id="rows" type="number" value="2000000" min="1000" step="100000"></label>
+  <button onclick="generate()">Generate dataset</button>
+</section>
+
+<section>
+  <h2>2. Submit a task</h2>
+  <label>Operation <select id="type"></select></label>
+  <label>Chunk size <input id="chunk" type="number" value="250000" min="1000" step="50000"></label>
+  <button onclick="submitJob()">Submit</button>
+  <span id="msg"></span>
+</section>
+
+<section>
+  <h2>3. Jobs</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Operation</th><th>Status</th><th>Progress</th><th>Elapsed</th></tr></thead>
+    <tbody id="jobs"></tbody>
+  </table>
+</section>
+
+<section id="detail" hidden>
+  <h2>Job <span id="did"></span></h2>
+  <div id="distribution"></div>
+  <pre id="result"></pre>
+</section>
+
+<script>
+let selected = null;
+const $ = id => document.getElementById(id);
+const api = async (path, opts) => {
+  const r = await fetch('/api' + path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || r.statusText);
+  return body;
+};
+const post = (path, data) => api(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+
+async function init() {
+  const types = await api('/job-types');
+  $('type').innerHTML = Object.entries(types).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  refresh(); setInterval(refresh, 2000);
+}
+async function generate() {
+  $('msg').textContent = '';
+  $('dataset').textContent = 'generating (this can take a while)...';
+  try { await post('/dataset', {rows: +$('rows').value}); } catch (e) { $('msg').textContent = e.message; }
+  refresh();
+}
+async function submitJob() {
+  $('msg').textContent = '';
+  try {
+    const j = await post('/jobs', {type: $('type').value, params: {chunk_size: +$('chunk').value}});
+    selected = j.id;
+  } catch (e) { $('msg').textContent = e.message; }
+  refresh();
+}
+const bar = (d, t) => `<span class="bar"><span style="width:${t ? 100 * d / t : 0}%"></span></span> ${d}/${t}`;
+async function refresh() {
+  try {
+    const ds = await api('/dataset');
+    $('dataset').textContent = `${Number(ds.rows).toLocaleString()} rows in PostgreSQL`;
+    const jobs = await api('/jobs');
+    $('jobs').innerHTML = jobs.map(j => `<tr class="job" onclick="selected=${j.id};refresh()">
+      <td>${j.id}</td><td>${j.type}</td><td class="${j.status}">${j.status}</td>
+      <td>${bar(j.done, j.tasks)}</td><td>${j.elapsed_s == null ? '-' : (+j.elapsed_s).toFixed(1) + ' s'}</td></tr>`).join('');
+    if (selected) {
+      const j = await api('/jobs/' + selected);
+      $('detail').hidden = false; $('did').textContent = `#${j.id} (${j.type}) - ${j.status}`;
+      $('distribution').innerHTML = '<table><thead><tr><th>Node</th><th>Tasks claimed</th><th>Done</th><th>CPU busy time</th></tr></thead><tbody>' +
+        j.by_node.map(n => `<tr><td>${n.node}</td><td>${n.tasks}</td><td>${n.done}</td><td>${(n.busy_ms / 1000).toFixed(1)} s</td></tr>`).join('') +
+        '</tbody></table><br>';
+      $('result').textContent = j.error || (j.result ? JSON.stringify(j.result, null, 2) : 'waiting for results...');
+    }
+  } catch (e) { $('msg').textContent = e.message; }
+}
+init();
+</script>
+</body>
+</html>

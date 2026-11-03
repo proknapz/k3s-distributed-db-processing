@@ -1,0 +1,48 @@
+# Python workers. topologySpreadConstraints forces the replicas to be spread
+# evenly across the two worker nodes (maxSkew 1). Scale with:
+#   kubectl -n dbp scale deployment/worker --replicas=6
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: dbp
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      nodeSelector:
+        dbp/worker: "true"
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: worker
+      containers:
+        - name: worker
+          image: dbp-platform:1.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "dbp.worker"]
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: postgres-credentials, key: POSTGRES_USER}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: postgres-credentials, key: POSTGRES_PASSWORD}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          resources:
+            # Python is single-threaded, so one pod uses at most ~1 core.
+            requests: {cpu: 500m, memory: 256Mi}
+            limits: {cpu: "1", memory: 1Gi}
