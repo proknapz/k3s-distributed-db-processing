@@ -62,25 +62,21 @@ def dataset_info():
         return cur.fetchone()
 
 
-@app.post("/api/dataset")
+@app.post("/api/dataset", status_code=202)
 def generate_dataset(req: DatasetRequest):
-    """Seed the records table (random values with injected outliers and duplicate keys)."""
+    """Seed the records table via a background job to avoid timeouts."""
     with cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM jobs WHERE status IN ('queued', 'running')")
         if cur.fetchone()["n"]:
             raise HTTPException(409, "Wait for running jobs to finish before regenerating data")
-        cur.execute("TRUNCATE records RESTART IDENTITY")
-        cur.execute(
-            """
-            INSERT INTO records (category, key, value)
-            SELECT 'cat-' || (g % 10),
-                   'K' || floor(random() * %(rows)s * 0.8)::bigint,
-                   CASE WHEN random() < 0.005 THEN 400 + random() * 600
-                        ELSE 50 + (random() + random() + random() - 1.5) * 40 END
-            FROM generate_series(1, %(rows)s) g
-            """, {"rows": req.rows})
-        cur.execute("ANALYZE records")
-    return dataset_info()
+
+        cur.execute("INSERT INTO jobs (type, params) VALUES (%s, %s) RETURNING id",
+                    ("seed_dataset", Json({"rows": req.rows})))
+        job_id = cur.fetchone()["id"]
+
+        cur.execute("INSERT INTO tasks (job_id, idx, payload) VALUES (%s, %s, %s)",
+                    (job_id, 0, Json({"rows": req.rows})))
+    return {"id": job_id}
 
 
 @app.post("/api/jobs", status_code=201)

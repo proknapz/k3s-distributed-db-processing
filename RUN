@@ -1,0 +1,28 @@
+./deploy.sh laptop-r10q787a desktop-g8j5afn ghcr.io/proknapz/k3s-distributed-db-processing/dbp-platform:latest
+
+
+stop: 
+
+sudo kubectl -n dbp scale deployment/api --replicas=0
+sudo kubectl -n dbp scale deployment/worker --replicas=0
+sudo kubectl -n dbp scale statefulset/postgres --replicas=0
+
+
+sudo kubectl delete namespace dbp
+
+
+sudo kubectl -n dbp scale statefulset/postgres --replicas=1
+sudo kubectl -n dbp scale deployment/api --replicas=1
+
+sudo kubectl -n dbp scale deployment/worker --replicas=5   
+
+
+remove all deployment
+sudo kubectl delete -f ./k8s
+
+
+
+
+
+list all pods
+sudo kubectl get pods -o wide

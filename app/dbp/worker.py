@@ -56,7 +56,7 @@ def fail(conn, task_id, job_id, error):
         cur.execute(
             "UPDATE tasks SET status = CASE WHEN attempts >= %s THEN 'failed' ELSE 'pending' END, "
             "error = %s WHERE id = %s RETURNING status", (MAX_ATTEMPTS, error[-2000:], task_id))
-        if cur.fetchone()[0] == 'failed':
+        if cur.fetchone()[0] == "failed":
             cur.execute(
                 "UPDATE jobs SET status = 'failed', error = %s, finished_at = now() "
                 "WHERE id = %s AND status IN ('queued', 'running')",
@@ -91,10 +91,27 @@ def requeue_stale(conn):
             "WHERE status = 'running' AND claimed_at < now() - make_interval(secs => %s) "
             "RETURNING job_id, status", (MAX_ATTEMPTS, STALE_SECONDS))
         for job_id, status in cur.fetchall():
-            if status == 'failed':
+            if status == "failed":
                 cur.execute("UPDATE jobs SET status = 'failed', error = 'task lost', "
-                            "finished_at = now() WHERE id = %s AND status IN ('queued','running')",
+                            "finished_at = now() WHERE id = %s AND status IN ('queued', 'running')",
                             (job_id,))
+
+
+def handle_seed(conn, params, payload):
+    """Handle the system job for generating the dataset."""
+    rows = params.get("rows", 1_000_000)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE records RESTART IDENTITY")
+        cur.execute(
+            """
+            INSERT INTO records (category, key, value)
+            SELECT 'cat-' || (g % 10),
+                   'K' || floor(random() * %(rows)s * 0.8)::bigint,
+                   CASE WHEN random() < 0.005 THEN 400 + random() * 600
+                        ELSE 50 + (random() + random() + random() - 1.5) * 40 END
+            FROM generate_series(1, %(rows)s) g
+            """, {"rows": rows})
+    return {"rows": rows, "status": "seeded"}
 
 
 def main():
@@ -115,7 +132,10 @@ def main():
             started = time.monotonic()
             print(f"task {task_id} (job {job_id}, {job_type}) {payload}", flush=True)
             try:
-                result = processing.run(job_type, params, payload, conn)
+                if job_type == "seed_dataset":
+                    result = handle_seed(conn, params, payload)
+                else:
+                    result = processing.run(job_type, params, payload, conn)
                 conn.commit()
             except Exception:
                 conn.rollback()

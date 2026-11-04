@@ -1,18 +1,26 @@
 param(
-    # Kubernetes node names (kubectl get nodes): Worker 1 hosts PostgreSQL, Worker 2 only runs workers
     [Parameter(Mandatory)][string]$Node1,
-    [Parameter(Mandatory)][string]$Node2,
-    # Use a prebuilt image (e.g. ghcr.io/<owner>/dbp-platform:latest) pulled by the nodes.
-    # If omitted, the image is built locally and copied to the workers over SSH (-Workers required).
+    [Parameter(Mandatory=$false)][string]$Node2 = "",
     [string]$Image,
-    [string[]]$Workers,   # SSH targets, e.g. user@100.64.0.11,user@100.64.0.12
-    # Only for private GHCR packages
+    [string[]]$Workers,
     [string]$RegistryUser,
     [string]$RegistryToken
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-function Run($cmd) { Write-Host ">> $cmd" -ForegroundColor Cyan; Invoke-Expression $cmd; if ($LASTEXITCODE) { throw "failed: $cmd" } }
+
+# FORCED CONFIG PATH - Change this if your k3s.yaml is elsewhere
+$KubeConfig = "/etc/rancher/k3s/k3s.yaml"
+
+function Run($cmd) { 
+    # Inject --kubeconfig into every kubectl command
+    if ($cmd -like "kubectl*") {
+        $cmd = $cmd.Replace("kubectl ", "kubectl --kubeconfig=$KubeConfig ")
+    }
+    Write-Host ">> $cmd" -ForegroundColor Cyan
+    Invoke-Expression $cmd
+    if ($LASTEXITCODE) { throw "failed: $cmd" } 
+}
 
 if (-not $Image) {
     if (-not $Workers) { throw "Provide -Image <registry image> or -Workers <ssh targets>" }
@@ -26,21 +34,25 @@ if (-not $Image) {
     }
 }
 
-Run "kubectl label node $Node1 $Node2 dbp/worker=true --overwrite"
+Run "kubectl label node $Node1 dbp/worker=true --overwrite"
+if ($Node2) {
+    Run "kubectl label node $Node2 dbp/worker=true --overwrite"
+}
 Run "kubectl label node $Node1 dbp/db=true --overwrite"
 Run "kubectl apply -f `"$root\k8s\00-namespace-config.yaml`""
 
-# Create the DB secret once; never overwrite an existing password (the DB volume keeps the old one).
-kubectl -n dbp get secret postgres-credentials *> $null
+# Handle secrets separately because they use a direct call
+$secretCheck = "kubectl --kubeconfig=$KubeConfig -n dbp get secret postgres-credentials"
+Invoke-Expression $secretCheck *> $null
 if ($LASTEXITCODE) {
     $bytes = New-Object byte[] 24
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-    $pw = [Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', 'x'
+    $pw = [Convert]::ToBase64String($bytes) -replace "[^A-Za-z0-9]", "x"
     Run "kubectl -n dbp create secret generic postgres-credentials --from-literal=POSTGRES_DB=dbp --from-literal=POSTGRES_USER=dbp --from-literal=POSTGRES_PASSWORD=$pw"
 }
 
 if ($RegistryUser) {
-    kubectl -n dbp delete secret regcred --ignore-not-found | Out-Null
+    Run "kubectl -n dbp delete secret regcred --ignore-not-found"
     Run "kubectl -n dbp create secret docker-registry regcred --docker-server=ghcr.io --docker-username=$RegistryUser --docker-password=$RegistryToken"
 }
 
@@ -50,7 +62,7 @@ Run "kubectl -n dbp set image deployment/worker worker=$Image"
 if ($RegistryUser) {
     $patch = Join-Path $env:TEMP "dbp-pullsecret.json"
     '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"regcred"}]}}}}' | Set-Content -Encoding ascii $patch
-    foreach ($d in 'api', 'worker') { Run "kubectl -n dbp patch deployment $d --patch-file `"$patch`"" }
+    foreach ($d in "api", "worker") { Run "kubectl -n dbp patch deployment $d --patch-file `"$patch`"" }
 }
 Run "kubectl -n dbp rollout status statefulset/postgres --timeout=300s"
 Run "kubectl -n dbp rollout status deployment/api --timeout=300s"
