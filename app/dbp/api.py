@@ -30,11 +30,11 @@ def cursor():
 
 
 class DatasetRequest(BaseModel):
-    rows: int = Field(1_000_000, ge=1000, le=20_000_000)
+    rows: int = Field(1_000_000, gt=0)
 
 
 class JobRequest(BaseModel):
-    type: Literal["statistics", "duplicates", "anomalies", "sort", "report"]
+    type: Literal["statistics", "duplicates", "join", "anomalies", "sort", "report"]
     params: dict = {}
 
 

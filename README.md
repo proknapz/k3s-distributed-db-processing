@@ -22,7 +22,9 @@ atomically (`FOR UPDATE SKIP LOCKED`), do the CPU-heavy work in Python, and writ
 | `scripts/deploy.ps1` | Label nodes, create DB secret, apply manifests, set the image |
 | `.github/workflows/build-image.yml` | Builds and pushes the image to GHCR on every push to `main` |
 
-Task types: Calculate Statistics, Find Duplicates, Detect Anomalies, Sort Data, Generate Report.
+Task types: Calculate Statistics, Find Duplicates, Join Records on Key, Detect Anomalies,
+Sort Data, Generate Report. The join operation compares distinct record pairs sharing a key
+and reports the pair count and sum of absolute value differences without storing joined rows.
 (Compare Datasets is not implemented yet; add a runner/reducer pair in `processing.py`.)
 Anomaly detection uses z-scores computed per chunk, which is an approximation on random data.
 

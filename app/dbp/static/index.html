@@ -24,7 +24,7 @@
 <section>
   <h2>1. Dataset</h2>
   <span id="dataset">loading...</span><br><br>
-  <label>Rows <input id="rows" type="number" value="2000000" min="1000" max="20000000" step="100000"></label>
+  <label>Rows <input id="rows" type="number" value="2000000" min="1" step="1"></label>
   <button onclick="generate()">Generate dataset</button>
 </section>
 
@@ -84,8 +84,8 @@ async function generate() {
     return;
   }
   const rows = Number(val);
-  if (!Number.isInteger(rows) || rows < 1000 || rows > 20_000_000) {
-    $("msg").textContent = "Rows must be between 1,000 and 20,000,000";
+  if (!Number.isSafeInteger(rows) || rows < 1) {
+    $("msg").textContent = "Rows must be a positive whole number";
     return;
   }
   $("dataset").textContent = "generating (please wait)...";

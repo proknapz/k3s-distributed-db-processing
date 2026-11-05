@@ -13,6 +13,7 @@ from collections import Counter
 JOB_TYPES = {
     "statistics": "Calculate Statistics",
     "duplicates": "Find Duplicates",
+    "join": "Join Records on Key",
     "anomalies": "Detect Anomalies",
     "sort": "Sort Data",
     "report": "Generate Report",
@@ -35,7 +36,7 @@ def _stream(conn, sql, args=()):
 # ---------------------------------------------------------------- split
 
 def split(job_type, params, min_id, max_id):
-    if job_type == "duplicates":
+    if job_type in {"duplicates", "join"}:
         parts = int(params.get("partitions", 8))
         return [{"part": p, "parts": parts} for p in range(parts)]
     chunk = int(params.get("chunk_size", 250000))
@@ -85,6 +86,32 @@ def _run_duplicates(params, payload, conn):
     }
 
 
+def _run_join(params, payload, conn):
+    values_by_key = {}
+    for key, value in _stream(
+        conn,
+        "SELECT key, value FROM records WHERE mod(abs(hashtext(key)::bigint), %s) = %s",
+        (payload["parts"], payload["part"]),
+    ):
+        values_by_key.setdefault(key, []).append(value)
+
+    matched_pairs = 0
+    value_difference = 0.0
+    for values in values_by_key.values():
+        for i, left in enumerate(values):
+            for j in range(i + 1, len(values)):
+                right = values[j]
+                matched_pairs += 1
+                value_difference += abs(left - right)
+
+    return {
+        "rows_scanned": sum(map(len, values_by_key.values())),
+        "keys": len(values_by_key),
+        "matched_pairs": matched_pairs,
+        "sum_absolute_value_difference": value_difference,
+    }
+
+
 def _run_anomalies(params, payload, conn):
     threshold = float(params.get("z_threshold", 3.0))
     rows = list(_stream(conn, "SELECT id, value FROM records WHERE id BETWEEN %s AND %s",
@@ -128,6 +155,7 @@ def _run_report(params, payload, conn):
 RUNNERS = {
     "statistics": _run_statistics,
     "duplicates": _run_duplicates,
+    "join": _run_join,
     "anomalies": _run_anomalies,
     "sort": _run_sort,
     "report": _run_report,
@@ -169,6 +197,18 @@ def _reduce_duplicates(params, results):
     }
 
 
+def _reduce_join(params, results):
+    return {
+        "join_condition": "records.key = records.key (distinct row pairs)",
+        "rows_scanned": sum(r["rows_scanned"] for r in results),
+        "keys": sum(r["keys"] for r in results),
+        "matched_pairs": sum(r["matched_pairs"] for r in results),
+        "sum_absolute_value_difference": sum(
+            r["sum_absolute_value_difference"] for r in results
+        ),
+    }
+
+
 def _reduce_anomalies(params, results):
     top = heapq.nlargest(TOP_N, (t for r in results for t in r["top"]), key=lambda t: abs(t[2]))
     return {
@@ -203,10 +243,16 @@ def _reduce_report(params, results):
     return {"total_rows": sum(r["count"] for r in rows), "categories": rows}
 
 
+def _reduce_seed_dataset(params, results):
+    return results[0]
+
+
 REDUCERS = {
     "statistics": _reduce_statistics,
     "duplicates": _reduce_duplicates,
+    "join": _reduce_join,
     "anomalies": _reduce_anomalies,
     "sort": _reduce_sort,
     "report": _reduce_report,
+    "seed_dataset": _reduce_seed_dataset,
 }

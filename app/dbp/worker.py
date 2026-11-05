@@ -105,7 +105,7 @@ def handle_seed(conn, params, payload):
         cur.execute(
             """
             INSERT INTO records (category, key, value)
-            SELECT 'cat-' || (g % 10),
+            SELECT 'cat-' || (g %% 10),
                    'K' || floor(random() * %(rows)s * 0.8)::bigint,
                    CASE WHEN random() < 0.005 THEN 400 + random() * 600
                         ELSE 50 + (random() + random() + random() - 1.5) * 40 END
